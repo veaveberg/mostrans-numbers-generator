@@ -392,8 +392,8 @@ function App() {
             <th>Суффикс</th>
             <th style={{ width: '80px' }}>Кегль</th>
             <th>Размеры</th>
-            <th style={{ width: '110px' }}>Фон CMYK</th>
-            <th style={{ width: '110px' }}>Текст CMYK</th>
+            <th style={{ width: '110px' }}>Заливка CMYK</th>
+            <th style={{ width: '110px' }}>Обводка CMYK</th>
             <th style={{ width: '60px' }}></th>
           </tr>
         </thead>
