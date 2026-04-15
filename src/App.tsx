@@ -254,14 +254,18 @@ function App() {
   const handleDragEnd = () => { setDragIdx(null); setDragOverIdx(null); };
 
   // ─── Clear tables ───
-  const handleClearSizes = () => {
+  const handleClearSizes = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     if (!confirm('Очистить таблицу размеров?\n\nCtrl+Z / Cmd+Z — для отмены.')) return;
     undoStack.current.push({ type: 'sizes', sizes: [...sizes] });
     setSizes([]);
     setRawCategories({});
     setDisabledLabels({});
   };
-  const handleClearTrams = () => {
+  const handleClearTrams = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     if (!confirm('Очистить таблицу транспорта?\n\nCtrl+Z / Cmd+Z — для отмены.')) return;
     undoStack.current.push({ type: 'trams', trams: [...trams] });
     setTrams([]);
@@ -372,12 +376,12 @@ function App() {
       <div className="toolbar">
         <h2 style={{ margin: 0 }}>Размеры</h2>
         <div className="toolbar-right">
-          <button className="btn btn-danger" onClick={handleClearSizes} title="Очистить таблицу">
+          <button type="button" className="btn btn-danger" onClick={handleClearSizes} title="Очистить таблицу">
             <RotateCcw size={14} /> Очистить
           </button>
           <input type="file" accept=".csv" style={{ display: 'none' }} ref={sizesFileRef} onChange={handleImportSizes} />
-          <button className="btn" onClick={() => sizesFileRef.current?.click()}><Upload size={14} /> Импорт CSV</button>
-          <button className="btn" onClick={handleExportSizes}><Download size={14} /> Экспорт CSV</button>
+          <button type="button" className="btn" onClick={() => sizesFileRef.current?.click()}><Upload size={14} /> Импорт CSV</button>
+          <button type="button" className="btn" onClick={handleExportSizes}><Download size={14} /> Экспорт CSV</button>
         </div>
       </div>
       <table>
@@ -468,27 +472,28 @@ function App() {
         </tbody>
       </table>
       <div style={{ padding: '0.3rem 0' }}>
-        <button className="btn" onClick={handleAddSize}><Plus size={14} /> Добавить размер</button>
+        <button type="button" className="btn" onClick={handleAddSize}><Plus size={14} /> Добавить размер</button>
       </div>
 
       {/* ─── TRAMS ─── */}
       <div className="toolbar" style={{ marginTop: '1rem' }}>
         <h2 style={{ margin: 0 }}>Транспорт</h2>
         <div className="toolbar-right">
-          <button className="btn btn-danger" onClick={handleClearTrams} title="Очистить таблицу">
+          <button type="button" className="btn btn-danger" onClick={handleClearTrams} title="Очистить таблицу">
             <RotateCcw size={14} /> Очистить
           </button>
           <input type="file" accept=".csv" style={{ display: 'none' }} ref={tramsFileRef} onChange={handleImportTrams} />
-          <button className="btn" onClick={() => tramsFileRef.current?.click()}><Upload size={14} /> Импорт CSV</button>
-          <button className="btn" onClick={handleExportTrams}><Download size={14} /> Экспорт CSV</button>
+          <button type="button" className="btn" onClick={() => tramsFileRef.current?.click()}><Upload size={14} /> Импорт CSV</button>
+          <button type="button" className="btn" onClick={handleExportTrams}><Download size={14} /> Экспорт CSV</button>
 
           {/* Folder hierarchy dropdown */}
           <div ref={folderRef} style={{ position: 'relative' }}>
-            <button
-              className={`btn ${activeFolderOrder.length ? 'btn-primary' : ''}`}
-              onClick={() => setFolderDropdownOpen(p => !p)}
-              title="Настройка иерархии папок в ZIP"
-            >
+	            <button
+                  type="button"
+	              className={`btn ${activeFolderOrder.length ? 'btn-primary' : ''}`}
+	              onClick={() => setFolderDropdownOpen(p => !p)}
+	              title="Настройка иерархии папок в ZIP"
+	            >
               <FolderTree size={14} /> Папки{activeFolderOrder.length > 0 && ` (${activeFolderOrder.length})`}
             </button>
             {folderDropdownOpen && (
@@ -515,8 +520,9 @@ function App() {
                     }}
                   >
                     <button
-                      onClick={() => toggleFolder(fi)}
-                      style={{
+                      type="button"
+	                      onClick={() => toggleFolder(fi)}
+	                      style={{
                         width: 18, height: 18, borderRadius: 4, border: '1px solid var(--border)',
                         background: fl.enabled ? 'var(--accent)' : 'transparent',
                         cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -540,7 +546,7 @@ function App() {
             )}
           </div>
 
-          <button className="btn btn-primary" onClick={handleGenerate}
+          <button type="button" className="btn btn-primary" onClick={handleGenerate}
             disabled={!trams.length || !sizes.length || isGenerating}>
             <Download size={14} /> {isGenerating ? 'Генерация...' : 'Скачать ZIP'}
           </button>
@@ -594,7 +600,7 @@ function App() {
         </tbody>
       </table>
       <div style={{ padding: '0.3rem 0' }}>
-        <button className="btn" onClick={handleAddTram}><Plus size={14} /> Добавить транспорт</button>
+          <button type="button" className="btn" onClick={handleAddTram}><Plus size={14} /> Добавить транспорт</button>
       </div>
     </div>
   );
