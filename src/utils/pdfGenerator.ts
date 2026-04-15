@@ -47,7 +47,11 @@ const ptToMm = (pt: number) => (pt * 25.4) / 72;
 let cachedFont: opentype.Font | null = null;
 async function loadOpentypeFont(): Promise<opentype.Font> {
   if (cachedFont) return cachedFont;
-  const response = await fetch('/MoscowSansW-Medium.otf');
+  const fontUrl = `${import.meta.env.BASE_URL}MoscowSansW-Medium.otf`;
+  const response = await fetch(fontUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to load font (${response.status}) at ${fontUrl}`);
+  }
   const buffer = await response.arrayBuffer();
   cachedFont = opentype.parse(buffer);
   return cachedFont;
