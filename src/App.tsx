@@ -1,8 +1,19 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Papa from 'papaparse';
-import { Copy, Plus, Trash2, Download, Upload, GripVertical, RotateCcw, FolderTree, Check } from 'lucide-react';
-import { generateStickers, calculateWidthCategories } from './utils/pdfGenerator';
-import type { SizeConfig, TramRow, WidthCategory } from './utils/pdfGenerator';
+import { Copy, Plus, Trash2, Download, Upload, GripVertical, RotateCcw, FolderTree, Check, ChevronDown } from 'lucide-react';
+import {
+  generateStickers,
+  calculateWidthCategories,
+  PDF_MAX_PAGE_MM,
+  PDF_MIN_PAGE_MM,
+} from './utils/pdfGenerator';
+import type {
+  SizeConfig,
+  TramRow,
+  WidthCategory,
+  OutputOptions,
+  ArtboardOptions,
+} from './utils/pdfGenerator';
 import './index.css';
 
 const LS_SIZES = 'tramgen_sizes';
@@ -10,10 +21,24 @@ const LS_TRAMS = 'tramgen_trams';
 const LS_CATS = 'tramgen_categories';
 const LS_DISABLED = 'tramgen_disabled';
 const LS_FOLDERS = 'tramgen_folders';
+const LS_OUTPUT_OPTIONS = 'tramgen_output_options';
+const LS_ARTBOARD_OPTIONS = 'tramgen_artboard_options';
 
 function loadLS<T>(key: string, fallback: T): T {
   try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; }
   catch { return fallback; }
+}
+
+function clampArtboardMm(value: string, fallback: string): string {
+  const parsed = parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return String(Math.min(PDF_MAX_PAGE_MM, Math.max(PDF_MIN_PAGE_MM, parsed)));
+}
+
+function clampGapMm(value: string, fallback: string): string {
+  const parsed = parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return String(Math.max(0, Math.min(PDF_MAX_PAGE_MM, parsed)));
 }
 
 function timestamp(): string {
@@ -32,30 +57,6 @@ function downloadText(content: string, filename: string) {
   const a = document.createElement('a'); a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
-}
-
-// CMYK → RGB values (0–1)
-function cmykToRgbValues(cmykStr: string): { r: number; g: number; b: number } | null {
-  const parts = cmykStr.split('.').map(Number);
-  if (parts.length !== 4 || parts.some(isNaN)) return null;
-  const [c, m, y, k] = parts.map(v => v / 100);
-  return { r: (1 - c) * (1 - k), g: (1 - m) * (1 - k), b: (1 - y) * (1 - k) };
-}
-
-function cmykStyle(cmykStr: string): React.CSSProperties {
-  const rgb = cmykToRgbValues(cmykStr);
-  if (!rgb) return {};
-  const { r, g, b } = rgb;
-  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-  return {
-    backgroundColor: `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`,
-    color: lum > 0.5 ? '#37352f' : '#ffffff',
-  };
-}
-
-function normalizeCmyk(val: string): string {
-  if (!val.trim()) return '0.0.0.0';
-  return val;
 }
 
 // Apply disabled labels: merge disabled categories' trams into next enabled larger one
@@ -86,11 +87,51 @@ const defaultFolders: FolderLevel[] = [
   { key: 'size', label: 'Размер', enabled: false },
 ];
 
+const defaultOutputOptions: OutputOptions = {
+  single: true,
+  artboard: false,
+};
+
+const defaultArtboardOptions: ArtboardOptions = {
+  widthMm: '1000',
+  heightMm: '1000',
+  heightTolerance5: true,
+  groupBy: 'all',
+  gapMm: '10',
+  direction: 'horizontal',
+};
+
+function normalizeOutputOptions(value: unknown): OutputOptions {
+  if (!value || typeof value !== 'object') return defaultOutputOptions;
+  const source = value as Partial<OutputOptions>;
+  return {
+    single: typeof source.single === 'boolean' ? source.single : defaultOutputOptions.single,
+    artboard: typeof source.artboard === 'boolean' ? source.artboard : defaultOutputOptions.artboard,
+  };
+}
+
+function normalizeArtboardOptions(value: unknown): ArtboardOptions {
+  if (!value || typeof value !== 'object') return defaultArtboardOptions;
+  const source = value as Partial<ArtboardOptions> & { size?: string };
+  return {
+    widthMm: clampArtboardMm(source.widthMm ?? defaultArtboardOptions.widthMm, defaultArtboardOptions.widthMm),
+    heightMm: clampArtboardMm(source.heightMm ?? defaultArtboardOptions.heightMm, defaultArtboardOptions.heightMm),
+    heightTolerance5: typeof source.heightTolerance5 === 'boolean' ? source.heightTolerance5 : defaultArtboardOptions.heightTolerance5,
+    groupBy: source.groupBy === 'depot' || source.groupBy === 'model_depot' || source.groupBy === 'all'
+      ? source.groupBy
+      : defaultArtboardOptions.groupBy,
+    gapMm: clampGapMm(source.gapMm ?? defaultArtboardOptions.gapMm, defaultArtboardOptions.gapMm),
+    direction: source.direction === 'vertical' || source.direction === 'horizontal'
+      ? source.direction
+      : defaultArtboardOptions.direction,
+  };
+}
+
 function App() {
   const [sizes, setSizes] = useState<SizeConfig[]>(() =>
     loadLS(LS_SIZES, [
-      { id: 'size_1', index: '28', suffix: 'салон-чёрн', fontSize: '160', bgColor: '0.0.0.100', textColor: '0.0.0.0' },
-      { id: 'size_2', index: '41a', suffix: 'пер-светоотр', fontSize: '436', bgColor: '0.0.0.0', textColor: '0.0.0.100' },
+      { id: 'size_1', index: '28', suffix: 'салон-чёрн', fontSize: '160' },
+      { id: 'size_2', index: '41a', suffix: 'пер-светоотр', fontSize: '436' },
     ])
   );
   const [trams, setTrams] = useState<TramRow[]>(() =>
@@ -101,7 +142,11 @@ function App() {
   const [rawCategories, setRawCategories] = useState<Record<string, WidthCategory[]>>(() => loadLS(LS_CATS, {}));
   const [disabledLabels, setDisabledLabels] = useState<Record<string, string[]>>(() => loadLS(LS_DISABLED, {}));
   const [folders, setFolders] = useState<FolderLevel[]>(() => loadLS(LS_FOLDERS, defaultFolders));
+  const [outputOptions, setOutputOptions] = useState<OutputOptions>(() => normalizeOutputOptions(loadLS(LS_OUTPUT_OPTIONS, defaultOutputOptions)));
+  const [artboardOptions, setArtboardOptions] = useState<ArtboardOptions>(() => normalizeArtboardOptions(loadLS(LS_ARTBOARD_OPTIONS, defaultArtboardOptions)));
   const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
+  const [artboardDropdownOpen, setArtboardDropdownOpen] = useState(false);
+  const [outputModeError, setOutputModeError] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -110,6 +155,7 @@ function App() {
   const sizesFileRef = useRef<HTMLInputElement>(null);
   const tramsFileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLDivElement>(null);
+  const artboardRef = useRef<HTMLDivElement>(null);
 
   // Undo stack for clear operations
   const undoStack = useRef<Array<{ type: 'sizes' | 'trams'; sizes?: SizeConfig[]; trams?: TramRow[] }>>([]);
@@ -126,6 +172,8 @@ function App() {
   useEffect(() => { localStorage.setItem(LS_CATS, JSON.stringify(rawCategories)); }, [rawCategories]);
   useEffect(() => { localStorage.setItem(LS_DISABLED, JSON.stringify(disabledLabels)); }, [disabledLabels]);
   useEffect(() => { localStorage.setItem(LS_FOLDERS, JSON.stringify(folders)); }, [folders]);
+  useEffect(() => { localStorage.setItem(LS_OUTPUT_OPTIONS, JSON.stringify(outputOptions)); }, [outputOptions]);
+  useEffect(() => { localStorage.setItem(LS_ARTBOARD_OPTIONS, JSON.stringify(artboardOptions)); }, [artboardOptions]);
 
   // Ctrl+Z undo for clear
   useEffect(() => {
@@ -145,15 +193,18 @@ function App() {
 
   // Close folder dropdown on outside click
   useEffect(() => {
-    if (!folderDropdownOpen) return;
+    if (!folderDropdownOpen && !artboardDropdownOpen) return;
     const handler = (e: MouseEvent) => {
       if (folderRef.current && !folderRef.current.contains(e.target as Node)) {
         setFolderDropdownOpen(false);
       }
+      if (artboardRef.current && !artboardRef.current.contains(e.target as Node)) {
+        setArtboardDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [folderDropdownOpen]);
+  }, [folderDropdownOpen, artboardDropdownOpen]);
 
   // ─── Auto-analyze: only trams with >0 quantity for each size ───
   const analysisKeys = sizes.map(sz => {
@@ -205,7 +256,7 @@ function App() {
 
   // ─── Sizes ───
   const handleAddSize = () => {
-    setSizes(p => [...p, { id: `s${Date.now()}`, index: '', suffix: '', fontSize: '160', bgColor: '0.0.0.0', textColor: '0.0.0.100' }]);
+    setSizes(p => [...p, { id: `s${Date.now()}`, index: '', suffix: '', fontSize: '160' }]);
   };
 
   const handleDuplicateSize = (i: number) => {
@@ -222,14 +273,6 @@ function App() {
 
   const handleSizeChange = useCallback((i: number, field: keyof SizeConfig, value: string) => {
     setSizes(prev => { const n = [...prev]; n[i] = { ...n[i], [field]: value }; return n; });
-  }, []);
-
-  const handleCmykBlur = useCallback((i: number, field: 'bgColor' | 'textColor') => {
-    setSizes(prev => {
-      const n = [...prev];
-      n[i] = { ...n[i], [field]: normalizeCmyk(n[i][field]) };
-      return n;
-    });
   }, []);
 
   const toggleCategoryLabel = (sizeId: string, label: string) => {
@@ -282,12 +325,29 @@ function App() {
     setFolderDragIdx(null);
   };
   const activeFolderOrder = folders.filter(f => f.enabled).map(f => f.key);
+  const setArtboardField = useCallback(function <K extends keyof ArtboardOptions>(field: K, value: ArtboardOptions[K]) {
+    setArtboardOptions(prev => ({ ...prev, [field]: value }));
+  }, []);
+  const normalizeArtboardField = useCallback((field: 'widthMm' | 'heightMm' | 'gapMm') => {
+    setArtboardOptions(prev => ({
+      ...prev,
+      [field]: field === 'gapMm'
+        ? clampGapMm(prev[field], defaultArtboardOptions.gapMm)
+        : clampArtboardMm(prev[field], defaultArtboardOptions[field]),
+    }));
+  }, []);
+  const toggleOutputOption = useCallback((field: keyof OutputOptions) => {
+    setOutputOptions(prev => {
+      const next = { ...prev, [field]: !prev[field] };
+      if (next.single || next.artboard) setOutputModeError(false);
+      return next;
+    });
+  }, []);
 
   // ─── Sizes CSV ───
   const handleExportSizes = () => {
     const csv = Papa.unparse(sizes.map(s => ({
       index: s.index, suffix: s.suffix, fontSize: s.fontSize,
-      bgColor: s.bgColor, textColor: s.textColor,
     })));
     downloadText(csv, `размеры_${timestamp()}.csv`);
   };
@@ -302,8 +362,6 @@ function App() {
           .map((r, i) => ({
             id: `s${Date.now()}_${i}`, index: r.index || '', suffix: r.suffix || '',
             fontSize: r.fontSize || '160',
-            bgColor: normalizeCmyk(r.bgColor || ''),
-            textColor: normalizeCmyk(r.textColor || ''),
           }));
         if (imported.length) setSizes(imported);
       },
@@ -362,8 +420,12 @@ function App() {
 
   // ─── Generation ───
   const handleGenerate = async () => {
+    if (!outputOptions.single && !outputOptions.artboard) {
+      setOutputModeError(true);
+      return;
+    }
     setIsGenerating(true);
-    try { await generateStickers(trams, sizes, widthCategories, activeFolderOrder); }
+    try { await generateStickers(trams, sizes, widthCategories, activeFolderOrder, outputOptions, artboardOptions); }
     catch (err: any) { console.error(err); alert('Ошибка: ' + err.message); }
     finally { setIsGenerating(false); }
   };
@@ -371,6 +433,227 @@ function App() {
   return (
     <div>
       <h1>Генератор бортовых номеров для печати</h1>
+      <div className="page-actions">
+        <div className="page-actions-left">
+          <button
+            type="button"
+            className={`btn btn-toggle ${outputOptions.single ? 'btn-toggle-active' : ''}${outputModeError ? ' btn-toggle-error' : ''}`}
+            onClick={() => toggleOutputOption('single')}
+            aria-pressed={outputOptions.single}
+          >
+            <span className={`toggle-check ${outputOptions.single ? 'toggle-check-active' : ''}${outputModeError ? ' toggle-check-error' : ''}`}>
+              {outputOptions.single && <Check size={12} />}
+            </span>
+            Один файл на номер
+          </button>
+
+          <div ref={artboardRef} className="dropdown-wrap">
+            <div
+              className={`btn btn-toggle btn-toggle-split ${outputOptions.artboard ? 'btn-toggle-active' : ''}${outputModeError ? ' btn-toggle-error' : ''}`}
+              aria-pressed={outputOptions.artboard}
+            >
+              <button
+                type="button"
+                className="split-toggle-main"
+                onClick={() => toggleOutputOption('artboard')}
+              >
+                <span className={`toggle-check ${outputOptions.artboard ? 'toggle-check-active' : ''}${outputModeError ? ' toggle-check-error' : ''}`}>
+                  {outputOptions.artboard && <Check size={12} />}
+                </span>
+                Несколько номеров на артборде
+              </button>
+              <button
+                type="button"
+                className="split-toggle-dropdown"
+                onClick={() => setArtboardDropdownOpen(prev => !prev)}
+                aria-label="Открыть настройки артборда"
+              >
+                <ChevronDown size={14} className={artboardDropdownOpen ? 'chevron-open' : ''} />
+              </button>
+            </div>
+
+            {artboardDropdownOpen && (
+              <div className="dropdown-panel dropdown-panel-wide">
+                <label className="form-row">
+                  <span className="form-label">Размер артборда</span>
+                  <div className="dimension-grid">
+                    <label className="form-row form-row-compact">
+                      <span className="form-label">Ширина</span>
+                      <div className="input-with-suffix">
+                        <input
+                          className="input-field"
+                          type="number"
+                          min={PDF_MIN_PAGE_MM}
+                          max={PDF_MAX_PAGE_MM}
+                          value={artboardOptions.widthMm}
+                          onChange={e => setArtboardField('widthMm', e.target.value)}
+                          onBlur={() => normalizeArtboardField('widthMm')}
+                          title={`Допустимо: ${PDF_MIN_PAGE_MM}–${PDF_MAX_PAGE_MM} мм`}
+                        />
+                        <span>мм</span>
+                      </div>
+                    </label>
+
+                    <label className="form-row form-row-compact">
+                      <span className="form-label">Высота</span>
+                      <div className="dimension-height-row">
+                        <div className="input-with-suffix">
+                          <input
+                            className="input-field"
+                            type="number"
+                            min={PDF_MIN_PAGE_MM}
+                            max={PDF_MAX_PAGE_MM}
+                            value={artboardOptions.heightMm}
+                            onChange={e => setArtboardField('heightMm', e.target.value)}
+                            onBlur={() => normalizeArtboardField('heightMm')}
+                            title={`Допустимо: ${PDF_MIN_PAGE_MM}–${PDF_MAX_PAGE_MM} мм`}
+                          />
+                          <span>мм</span>
+                        </div>
+                        <button
+                          type="button"
+                          className={`btn btn-mini-toggle ${artboardOptions.heightTolerance5 ? 'btn-mini-toggle-active' : ''}`}
+                          onClick={() => setArtboardField('heightTolerance5', !artboardOptions.heightTolerance5)}
+                          title="Корректировать высоту артборда в зависимости от помещающихся номеров."
+                        >
+                          ± 5%
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+                </label>
+
+                <div className="form-row">
+                  <span className="form-label">Группировать</span>
+                  <div className="radio-group radio-group-inline">
+                    <label className="radio-option">
+                      <input
+                        type="radio"
+                        name="groupBy"
+                        checked={artboardOptions.groupBy === 'all'}
+                        onChange={() => setArtboardField('groupBy', 'all')}
+                      />
+                      <span>Все</span>
+                    </label>
+                    <label className="radio-option">
+                      <input
+                        type="radio"
+                        name="groupBy"
+                        checked={artboardOptions.groupBy === 'depot'}
+                        onChange={() => setArtboardField('groupBy', 'depot')}
+                      />
+                      <span>По депо</span>
+                    </label>
+                    <label className="radio-option">
+                      <input
+                        type="radio"
+                        name="groupBy"
+                        checked={artboardOptions.groupBy === 'model_depot'}
+                        onChange={() => setArtboardField('groupBy', 'model_depot')}
+                      />
+                      <span>По модели и депо</span>
+                    </label>
+                  </div>
+                </div>
+
+                <label className="form-row">
+                  <span className="form-label">Отступ между номерами</span>
+                  <div className="input-with-suffix">
+                    <input
+                      className="input-field"
+                      type="number"
+                      min="0"
+                      max={PDF_MAX_PAGE_MM}
+                      value={artboardOptions.gapMm}
+                      onChange={e => setArtboardField('gapMm', e.target.value)}
+                      onBlur={() => normalizeArtboardField('gapMm')}
+                    />
+                    <span>мм</span>
+                  </div>
+                </label>
+
+                <div className="form-row">
+                  <span className="form-label">Основное направление укладки на артборде</span>
+                  <div className="radio-group radio-group-inline">
+                    <label className="radio-option">
+                      <input
+                        type="radio"
+                        name="direction"
+                        checked={artboardOptions.direction === 'horizontal'}
+                        onChange={() => setArtboardField('direction', 'horizontal')}
+                      />
+                      <span>Горизонтально</span>
+                    </label>
+                    <label className="radio-option">
+                      <input
+                        type="radio"
+                        name="direction"
+                        checked={artboardOptions.direction === 'vertical'}
+                        onChange={() => setArtboardField('direction', 'vertical')}
+                      />
+                      <span>Вертикально</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="page-actions-right">
+          <div ref={folderRef} className="dropdown-wrap">
+            <button
+              type="button"
+              className={`btn btn-toggle btn-menu ${activeFolderOrder.length ? 'btn-toggle-active' : ''}`}
+              onClick={() => setFolderDropdownOpen(p => !p)}
+              title="Настройка иерархии папок в ZIP"
+            >
+              <span className="menu-toggle-main">
+                <FolderTree size={14} /> Папки{activeFolderOrder.length > 0 && ` (${activeFolderOrder.length})`}
+              </span>
+              <span className="menu-toggle-dropdown" aria-hidden="true">
+                <ChevronDown size={14} className={folderDropdownOpen ? 'chevron-open' : ''} />
+              </span>
+            </button>
+            {folderDropdownOpen && (
+              <div className="dropdown-panel">
+                <div className="dropdown-title">Разложить по папкам</div>
+                {folders.map((fl, fi) => {
+                  const enabledBefore = folders.slice(0, fi).filter(folder => folder.enabled).length;
+                  const folderRowIndent = fl.enabled && enabledBefore > 0 ? enabledBefore : 0;
+                  return (
+                  <div key={fl.key}
+                    className="folder-option-row"
+                    draggable
+                    onDragStart={() => handleFolderDragStart(fi)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => handleFolderDrop(fi)}
+                    style={{ ['--folder-indent' as const]: folderRowIndent } as React.CSSProperties}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleFolder(fi)}
+                      className={`folder-option-check ${fl.enabled ? 'folder-option-check-active' : ''}`}
+                    >
+                      {fl.enabled && <Check size={12} color="var(--accent-contrast)" />}
+                    </button>
+                    <GripVertical size={12} className="folder-option-grip" />
+                    <span className={`folder-option-label ${fl.enabled ? 'folder-option-label-active' : ''}`}>
+                      {fl.label}
+                    </span>
+                  </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <button type="button" className="btn btn-primary btn-action" onClick={handleGenerate}
+            disabled={!trams.length || !sizes.length || isGenerating}>
+            <Download size={14} /> {isGenerating ? 'Генерация...' : 'Скачать ZIP'}
+          </button>
+        </div>
+      </div>
 
       {/* ─── SIZES ─── */}
       <div className="toolbar">
@@ -392,8 +675,6 @@ function App() {
             <th>Суффикс</th>
             <th style={{ width: '80px' }}>Кегль</th>
             <th>Размеры</th>
-            <th style={{ width: '110px' }}>Заливка CMYK</th>
-            <th style={{ width: '110px' }}>Обводка CMYK</th>
             <th style={{ width: '60px' }}></th>
           </tr>
         </thead>
@@ -411,7 +692,7 @@ function App() {
                 onDragEnd={handleDragEnd}
                 className={dragOverIdx === i ? 'drag-over' : ''}
               >
-                <td style={{ cursor: 'grab', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                <td className="drag-handle-cell">
                   <GripVertical size={14} />
                 </td>
                 <td><input className="input-field" placeholder="28" value={sz.index}
@@ -420,7 +701,7 @@ function App() {
                   onChange={e => handleSizeChange(i, 'suffix', e.target.value)} /></td>
                 <td><input className="input-field" type="number" value={sz.fontSize}
                   onChange={e => handleSizeChange(i, 'fontSize', e.target.value)} /></td>
-                <td>
+                <td className="size-categories-cell">
                   <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     {rawCats.length === 0 && (
                       <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>—</span>
@@ -449,18 +730,6 @@ function App() {
                   </div>
                 </td>
                 <td>
-                  <input className="input-field cmyk-input" placeholder="C.M.Y.K" value={sz.bgColor}
-                    onChange={e => handleSizeChange(i, 'bgColor', e.target.value)}
-                    onBlur={() => handleCmykBlur(i, 'bgColor')}
-                    style={cmykStyle(sz.bgColor)} />
-                </td>
-                <td>
-                  <input className="input-field cmyk-input" placeholder="C.M.Y.K" value={sz.textColor}
-                    onChange={e => handleSizeChange(i, 'textColor', e.target.value)}
-                    onBlur={() => handleCmykBlur(i, 'textColor')}
-                    style={cmykStyle(sz.textColor)} />
-                </td>
-                <td>
                   <div className="flex-row" style={{ gap: '0.15rem', justifyContent: 'center' }}>
                     <button className="btn" onClick={() => handleDuplicateSize(i)} title="Дублировать"><Copy size={13} /></button>
                     <button className="btn btn-danger" onClick={() => handleRemoveSize(i)} title="Удалить"><Trash2 size={13} /></button>
@@ -485,71 +754,6 @@ function App() {
           <input type="file" accept=".csv" style={{ display: 'none' }} ref={tramsFileRef} onChange={handleImportTrams} />
           <button type="button" className="btn" onClick={() => tramsFileRef.current?.click()}><Upload size={14} /> Импорт CSV</button>
           <button type="button" className="btn" onClick={handleExportTrams}><Download size={14} /> Экспорт CSV</button>
-
-          {/* Folder hierarchy dropdown */}
-          <div ref={folderRef} style={{ position: 'relative' }}>
-	            <button
-                  type="button"
-	              className={`btn ${activeFolderOrder.length ? 'btn-primary' : ''}`}
-	              onClick={() => setFolderDropdownOpen(p => !p)}
-	              title="Настройка иерархии папок в ZIP"
-	            >
-              <FolderTree size={14} /> Папки{activeFolderOrder.length > 0 && ` (${activeFolderOrder.length})`}
-            </button>
-            {folderDropdownOpen && (
-              <div style={{
-                position: 'absolute', right: 0, top: '100%', marginTop: 4,
-                background: 'white', border: '1px solid var(--border)',
-                borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                padding: '0.5rem 0', minWidth: 200, zIndex: 100,
-              }}>
-                <div style={{ padding: '0.25rem 0.75rem', fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  Разложить по папкам
-                </div>
-                {folders.map((fl, fi) => (
-                  <div key={fl.key}
-                    draggable
-                    onDragStart={() => handleFolderDragStart(fi)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => handleFolderDrop(fi)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '0.5rem',
-                      padding: '0.35rem 0.75rem', cursor: 'grab',
-                      paddingLeft: fl.enabled ? `${0.75 + fi * 0.75}rem` : '0.75rem',
-                      transition: 'padding-left 0.15s',
-                    }}
-                  >
-                    <button
-                      type="button"
-	                      onClick={() => toggleFolder(fi)}
-	                      style={{
-                        width: 18, height: 18, borderRadius: 4, border: '1px solid var(--border)',
-                        background: fl.enabled ? 'var(--accent)' : 'transparent',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        flexShrink: 0, padding: 0, transition: 'background 0.1s',
-                      }}
-                    >
-                      {fl.enabled && <Check size={12} color="white" />}
-                    </button>
-                    <GripVertical size={12} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
-                    <span style={{ fontSize: '0.8125rem', color: fl.enabled ? '#37352f' : 'var(--text-secondary)' }}>
-                      {fl.label}
-                    </span>
-                    {fl.enabled && (
-                      <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-                        {fi + 1}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <button type="button" className="btn btn-primary" onClick={handleGenerate}
-            disabled={!trams.length || !sizes.length || isGenerating}>
-            <Download size={14} /> {isGenerating ? 'Генерация...' : 'Скачать ZIP'}
-          </button>
         </div>
       </div>
       <table>
